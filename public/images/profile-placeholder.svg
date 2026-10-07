@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 500" role="img" aria-label="Profile placeholder">
+  <rect width="400" height="500" fill="#F7F6F2"/>
+  <rect x="24" y="24" width="352" height="452" fill="#FF7FA3" stroke="#111" stroke-width="6"/>
+  <circle cx="200" cy="180" r="72" fill="#C7FF4D" stroke="#111" stroke-width="6"/>
+  <rect x="88" y="280" width="224" height="140" fill="#7650F5" stroke="#111" stroke-width="6"/>
+  <text x="200" y="430" text-anchor="middle" font-family="monospace" font-size="14" fill="#111">REPLACE PORTRAIT</text>
+</svg>

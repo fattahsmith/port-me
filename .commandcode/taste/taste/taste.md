@@ -1,0 +1,11 @@
+# Taste
+- Wants changes implemented directly in the existing codebase and actually applied — not answered with instructions, plans, or code snippets alone. Confidence: 0.75
+- Expects the agent to inspect the existing codebase before making changes. Confidence: 0.7
+- Prefers incremental modifications that preserve the existing design identity, data, navigation, and working functionality over rebuilding from scratch. Confidence: 0.7
+- Prefers quality filters (e.g. anti-slop) applied during implementation rather than as a separate post-hoc review pass. Confidence: 0.55
+- Values maintainable, DRY architecture: prefers shared CSS variables / design tokens and reusable components over duplicating entire components per variant (e.g. per theme). Confidence: 0.6
+- Cares about accessibility: expects `prefers-reduced-motion` support, accessible aria-labels, and sufficient text/control contrast. Confidence: 0.6
+- Expects responsive, overflow-safe layouts verified across mobile (320–430px), tablet, and desktop widths. Confidence: 0.6
+- Strongly against fabricated content: wants existing/real data reused and missing assets left as clearly marked placeholders rather than invented entries or fake links. Confidence: 0.7
+- Prefers restrained, purposeful motion — no animating everything at once, no flashing, excessive bouncing, or unnecessary motion; keep text readable and stable. Confidence: 0.65
+- Expects the work validated before handoff: run lint/typecheck/production build and check for console, hydration, and TypeScript errors. Confidence: 0.6
