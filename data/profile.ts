@@ -9,7 +9,7 @@ export const profile = {
   tagline:
     "I design thoughtful digital experiences and build modern web applications that turn ideas into useful products.",
   about:
-    "I am an Information Management (D4) student at the State University of Surabaya (UNESA) with a keen interest in UI/UX Design Web DevelopmentGraphic Design , I have internship experience as a Front-End Developer and am proficient in developing web applications using React, Next.js, Tailwind CSS, and Supabase.",
+    "I am an Information Management (D4) student at the State University of Surabaya (UNESA) with a keen interest in UI/UX Design Web Development, Graphic Design , I have internship experience as a Front-End Developer and am proficient in developing web applications using React, Next.js, Tailwind CSS, and Supabase.",
   email: "[fattahsmith@gmail.com]",
   github: "https://github.com/fattahsmith",
   githubUsername: "fattahsmith",

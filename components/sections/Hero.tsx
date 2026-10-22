@@ -5,6 +5,8 @@ import { profile } from "@/data/profile";
 import { Button } from "@/components/ui/Button";
 import { RoleRotator } from "@/components/sections/RoleRotator";
 import { AnimatedHeadline } from "@/components/sections/AnimatedHeadline";
+import { MarketTicker } from "@/components/sections/MarketTicker";
+import "@/components/sections/market-ticker.css";
 
 export function Hero() {
   const reduceMotion = useReducedMotion();
@@ -14,6 +16,9 @@ export function Hero() {
       id="home"
       className="scroll-mt-[5.5rem] border-b-[2.5px] border-border grid-paper"
     >
+      {/* Market ticker — positioned at the top of the hero, below navbar */}
+      <MarketTicker />
+
       <div className="mx-auto flex min-h-[calc(100svh-3.25rem)] max-w-4xl flex-col items-center justify-center px-4 py-12 text-center md:px-6 md:py-16">
         <AnimatedHeadline />
 

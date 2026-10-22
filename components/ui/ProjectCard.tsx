@@ -73,9 +73,9 @@ export function ProjectCard({ project, featured }: ProjectCardProps) {
           ))}
         </ul>
         <div className="mt-6 flex flex-wrap gap-3">
-          {project.caseStudyUrl ? (
-            <Button href={project.caseStudyUrl} external variant="dark">
-              CASE STUDY ↗
+          {project.caseStudy?.sections && project.caseStudy.sections.length > 0 ? (
+            <Button href={`/projects/${project.slug}`} variant="dark">
+              CASE STUDY →
             </Button>
           ) : (
             <span className="inline-flex min-h-11 items-center border-[2.5px] border-dashed border-border px-4 font-mono text-[10px] uppercase text-foreground/60">
@@ -85,6 +85,10 @@ export function ProjectCard({ project, featured }: ProjectCardProps) {
           {project.liveDemoUrl ? (
             <Button href={project.liveDemoUrl} external variant="lime">
               LIVE DEMO ↗
+            </Button>
+          ) : project.prototypeUrl ? (
+            <Button href={project.prototypeUrl} external variant="purple">
+              PROTOTYPE ↗
             </Button>
           ) : (
             <span className="inline-flex min-h-11 items-center bg-pink/40 px-4 font-mono text-[10px] font-bold uppercase tracking-wide">

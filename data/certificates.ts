@@ -99,6 +99,15 @@ export const certificates: Certificate[] = [
     image: "/images/sertif/psg.jpg",
     verificationUrl: undefined,
   },
+  {
+    id: "company",
+    title: "Company Visit Certificate",
+    organization: "HIMAFORTIC UNESA",
+    issueDate: "08 oktober 2026",
+    category: "BOOTCAMP",
+    image: "/images/sertif/company.png",
+    verificationUrl: undefined,
+  },
 
  
 ];
