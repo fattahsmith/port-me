@@ -110,3 +110,10 @@ body {
     border-color 0.25s ease,
     box-shadow 0.25s ease;
 }
+
+/* Spider-Man profile: disable crossfade when reduced motion is preferred */
+@media (prefers-reduced-motion: reduce) {
+  [data-spiderman-profile] img {
+    transition: none !important;
+  }
+}

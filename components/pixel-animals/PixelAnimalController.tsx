@@ -1,13 +1,18 @@
 "use client";
 
 /**
- * PixelAnimalController
+ * PixelAnimalController — v2
  *
- * Drives a pixel cat that walks along the bottom of the viewport.
- * State machine: WALKING ↔ IDLE / SITTING / JUMPING / INTERACTING
+ * Upgraded pixel companion:
+ *  – Fixed to bottom-right corner of the viewport
+ *  – Cursor-look: rotates slightly toward the mouse when nearby (desktop)
+ *  – Zzz bubble during sit state
+ *  – Interaction counter with playful milestone messages
+ *  – Mute toggle (no audio yet, placeholder for future sound effects)
+ *  – Minimize / restore button
  *
- * Movement: requestAnimationFrame + direct DOM transform = no per-frame renders.
- * React state is only updated on state transitions and responsive breakpoints.
+ * State machine: walking ↔ idle / sitting / jumping / interacting
+ * Movement: RAF + direct DOM style — zero per-frame React re-renders.
  */
 
 import React, {
@@ -41,30 +46,52 @@ function pickRandom<T>(arr: readonly T[], exclude?: T): T {
   return filtered[Math.floor(Math.random() * filtered.length)];
 }
 
+/** Milestone messages for interaction counter */
+const MILESTONE_MESSAGES: Record<number, string> = {
+  1: "First click! 🎉",
+  5: "You clicked 5 times!",
+  10: "10 times? You love me! 💕",
+  25: "25 clicks... stalker? 👀",
+  50: "50 clicks! I'm tired 😴",
+  100: "100! You win! 🏆",
+};
+
 const SECTION_IDS = ["home", "about", "skills", "projects", "certificates", "github", "contact"];
+
+/** How close (px) the cursor must be to trigger look behavior */
+const LOOK_DISTANCE = 180;
 
 export function PixelAnimalController() {
   const reduceMotion = useReducedMotion();
   const [hidden, setHidden] = useState(false);
   const [catState, setCatState] = useState<CatState>("walking");
-  const [direction, setDirection] = useState<Direction>(1);
   const [bubble, setBubble] = useState<string | null>(null);
+  const [showZzz, setShowZzz] = useState(false);
+  const [interactionCount, setInteractionCount] = useState(0);
   const [mobile, setMobile] = useState(false);
+  // walkX: position from right edge (not left), so companion stays in corner
+  const [walkX, setWalkX] = useState(16);
 
-  // RAF-driven mutable refs (no re-renders per frame)
+  // RAF-driven mutable refs
   const charRef = useRef<HTMLDivElement>(null);
-  const posRef = useRef<number>(60);
-  const dirRef = useRef<Direction>(1);
+  const posRef = useRef<number>(16); // px from right edge
+  const dirRef = useRef<Direction>(-1); // start walking left
   const stateRef = useRef<CatState>("walking");
   const speedRef = useRef<number>(cfg.walkSpeed);
   const scaleRef = useRef<number>(cfg.scale.desktop);
   const rafRef = useRef<number>(0);
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const zzzTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMsgRef = useRef<string | undefined>(undefined);
   const currentSectionRef = useRef<string>("home");
+  const interactionCountRef = useRef<number>(0);
+  // Cursor tracking
+  const cursorXRef = useRef<number>(-9999);
+  const cursorYRef = useRef<number>(-9999);
+  const lookAngleRef = useRef<number>(0);
 
-  // ── Responsive setup ────────────────────────────────────────────────────
+  // ── Responsive setup ─────────────────────────────────────────────────────
   useEffect(() => {
     function update() {
       const w = window.innerWidth;
@@ -77,16 +104,25 @@ export function PixelAnimalController() {
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  // ── Section observer ────────────────────────────────────────────────────
+  // ── Cursor tracking (desktop only) ───────────────────────────────────────
+  useEffect(() => {
+    if (mobile) return;
+    function onMove(e: MouseEvent) {
+      cursorXRef.current = e.clientX;
+      cursorYRef.current = e.clientY;
+    }
+    window.addEventListener("mousemove", onMove, { passive: true });
+    return () => window.removeEventListener("mousemove", onMove);
+  }, [mobile]);
+
+  // ── Section observer ─────────────────────────────────────────────────────
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
         const visible = entries
           .filter((e) => e.isIntersecting)
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-        if (visible?.target.id) {
-          currentSectionRef.current = visible.target.id;
-        }
+        if (visible?.target.id) currentSectionRef.current = visible.target.id;
       },
       { rootMargin: "-30% 0px -30% 0px", threshold: 0.3 }
     );
@@ -97,25 +133,25 @@ export function PixelAnimalController() {
     return () => observer.disconnect();
   }, []);
 
-  // ── Timer helpers (stable, no deps) ─────────────────────────────────────
+  // ── Timer helpers ─────────────────────────────────────────────────────────
   const clearTimers = useCallback(() => {
     if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
     if (stateTimerRef.current) clearTimeout(stateTimerRef.current);
+    if (zzzTimerRef.current) clearTimeout(zzzTimerRef.current);
     idleTimerRef.current = null;
     stateTimerRef.current = null;
+    zzzTimerRef.current = null;
   }, []);
 
-  // ── scheduleIdle — defined before enterWalking so no forward reference ──
-  // We use a ref to hold the schedule function to break the circular dep.
   const scheduleIdleRef = useRef<() => void>(() => {});
 
   const enterWalking = useCallback(() => {
     stateRef.current = "walking";
     setCatState("walking");
+    setShowZzz(false);
     scheduleIdleRef.current();
   }, []);
 
-  // Set up the scheduleIdle function and store in ref
   useEffect(() => {
     scheduleIdleRef.current = function scheduleIdle() {
       if (!cfg.idleBehaviorEnabled) return;
@@ -129,7 +165,14 @@ export function PixelAnimalController() {
         if (roll < 0.4) {
           stateRef.current = "sitting";
           setCatState("sitting");
-          stateTimerRef.current = setTimeout(enterWalking, cfg.sitDuration);
+          // Show Zzz after a short settle time
+          zzzTimerRef.current = setTimeout(() => {
+            if (stateRef.current === "sitting") setShowZzz(true);
+          }, 800);
+          stateTimerRef.current = setTimeout(() => {
+            setShowZzz(false);
+            enterWalking();
+          }, cfg.sitDuration);
         } else if (roll < 0.7) {
           stateRef.current = "idle";
           setCatState("idle");
@@ -143,13 +186,12 @@ export function PixelAnimalController() {
     };
   }, [clearTimers, enterWalking]);
 
-  // Bootstrap on mount
   useEffect(() => {
     scheduleIdleRef.current();
     return clearTimers;
   }, [clearTimers]);
 
-  // ── RAF walk loop ────────────────────────────────────────────────────────
+  // ── RAF walk + cursor-look loop ───────────────────────────────────────────
   useEffect(() => {
     if (reduceMotion || hidden) {
       cancelAnimationFrame(rafRef.current);
@@ -157,46 +199,69 @@ export function PixelAnimalController() {
     }
 
     let lastT = 0;
+
     function frame(t: number) {
       rafRef.current = requestAnimationFrame(frame);
       if (lastT === 0) { lastT = t; return; }
       const dt = Math.min(t - lastT, 50);
       lastT = t;
 
-      if (stateRef.current !== "walking") return;
-
       const el = charRef.current;
       if (!el) return;
 
       const charW = cfg.gridSize * scaleRef.current;
-      const maxX = window.innerWidth - charW - 8;
+      // max walk distance from right: half the viewport so it stays in corner area
+      const maxOffset = Math.min(window.innerWidth * 0.45, 320);
 
-      let x = posRef.current + dirRef.current * speedRef.current * (dt / 16);
+      // ── Movement ──────────────────────────────────────────────────────
+      if (stateRef.current === "walking") {
+        let x = posRef.current + dirRef.current * speedRef.current * (dt / 16);
 
-      if (x >= maxX) {
-        x = maxX;
-        dirRef.current = -1;
-        setDirection(-1);
-      } else if (x <= 8) {
-        x = 8;
-        dirRef.current = 1;
-        setDirection(1);
+        if (x >= maxOffset) {
+          x = maxOffset;
+          dirRef.current = 1; // turn back toward right
+        } else if (x <= 8) {
+          x = 8;
+          dirRef.current = -1; // walk further left
+        }
+
+        posRef.current = x;
       }
 
-      posRef.current = x;
-      el.style.transform = `translateX(${x}px) scaleX(${dirRef.current})`;
+      // ── Cursor look (only when idle/walking, desktop) ─────────────────
+      let lookTilt = 0;
+      if (!mobile) {
+        const rect = el.getBoundingClientRect();
+        const catCX = rect.left + rect.width / 2;
+        const catCY = rect.top + rect.height / 2;
+        const dx = cursorXRef.current - catCX;
+        const dy = cursorYRef.current - catCY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < LOOK_DISTANCE && (stateRef.current === "walking" || stateRef.current === "idle")) {
+          // Tilt toward cursor, capped at ±15deg
+          const rawAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+          lookTilt = Math.max(-15, Math.min(15, rawAngle * 0.3));
+        }
+        // Smooth toward target
+        lookAngleRef.current += (lookTilt - lookAngleRef.current) * 0.08;
+      }
+
+      // Apply: position is "right edge offset" so we negate for left anchor
+      const rightPx = posRef.current;
+      const flipX = dirRef.current === 1 ? -1 : 1; // face direction
+      const totalW = window.innerWidth;
+
+      // Position: right-anchored. We place at `right: rightPx`
+      // Translate using left-based: left = totalW - rightPx - charW
+      const leftPx = totalW - rightPx - charW;
+      el.style.transform = `translateX(${leftPx}px) scaleX(${flipX}) rotate(${lookAngleRef.current}deg)`;
     }
 
     rafRef.current = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [reduceMotion, hidden]);
+  }, [reduceMotion, hidden, mobile]);
 
-  // Sync direction state → ref (only needed for the initial transform)
-  useEffect(() => {
-    dirRef.current = direction;
-  }, [direction]);
-
-  // ── Click / interact handler ─────────────────────────────────────────────
+  // ── Click / interact handler ───────────────────────────────────────────────
   const handleClick = useCallback(() => {
     if (!cfg.speechEnabled) return;
     if (bubble) return;
@@ -204,16 +269,25 @@ export function PixelAnimalController() {
     clearTimers();
     stateRef.current = "interacting";
     setCatState("interacting");
+    setShowZzz(false);
 
-    const sectionMsg =
-      cfg.sectionMessages[currentSectionRef.current as keyof typeof cfg.sectionMessages];
-    const allMessages = cfg.clickMessages as readonly string[];
+    const newCount = interactionCountRef.current + 1;
+    interactionCountRef.current = newCount;
+    setInteractionCount(newCount);
 
+    // Pick message: milestone > section-aware > random
     let msg: string;
-    if (sectionMsg && lastMsgRef.current !== sectionMsg) {
-      msg = sectionMsg;
+    if (MILESTONE_MESSAGES[newCount]) {
+      msg = MILESTONE_MESSAGES[newCount];
     } else {
-      msg = pickRandom(allMessages, lastMsgRef.current as (typeof allMessages)[number]);
+      const sectionMsg =
+        cfg.sectionMessages[currentSectionRef.current as keyof typeof cfg.sectionMessages];
+      const allMessages = cfg.clickMessages as readonly string[];
+      if (sectionMsg && lastMsgRef.current !== sectionMsg) {
+        msg = sectionMsg;
+      } else {
+        msg = pickRandom(allMessages, lastMsgRef.current as (typeof allMessages)[number]);
+      }
     }
     lastMsgRef.current = msg;
     setBubble(msg);
@@ -225,9 +299,7 @@ export function PixelAnimalController() {
     }, cfg.bubbleDuration + 300);
   }, [bubble, clearTimers]);
 
-  const handleBubbleDismiss = useCallback(() => {
-    setBubble(null);
-  }, []);
+  const handleBubbleDismiss = useCallback(() => setBubble(null), []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -239,7 +311,7 @@ export function PixelAnimalController() {
     [handleClick]
   );
 
-  // ── Cleanup ──────────────────────────────────────────────────────────────
+  // ── Cleanup ────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       clearTimers();
@@ -247,13 +319,14 @@ export function PixelAnimalController() {
     };
   }, [clearTimers]);
 
-  // ── Reduced motion: static render ────────────────────────────────────────
+  // ── Reduced-motion: static render ─────────────────────────────────────────
   if (reduceMotion) {
     if (hidden) return null;
     return (
       <div className="pixel-animal-root" aria-hidden="true">
         <div
-          style={{ position: "absolute", bottom: 8, left: 60 }}
+          className="pixel-char"
+          style={{ position: "absolute", bottom: 8, right: 16 }}
           role="img"
           aria-label="Pixel cat companion"
         >
@@ -269,14 +342,26 @@ export function PixelAnimalController() {
 
   return (
     <>
-      <button
-        className="pixel-hide-btn"
-        onClick={() => setHidden((h) => !h)}
-        aria-label={hidden ? "Show pixel cat companion" : "Hide pixel cat companion"}
-        title={hidden ? "Show pixel cat" : "Hide pixel cat"}
-      >
-        {hidden ? "🐱" : "×"}
-      </button>
+      {/* Controls: minimize + interaction counter */}
+      <div className="pixel-controls" aria-label="Pixel companion controls">
+        {!hidden && interactionCount > 0 && (
+          <span
+            className="pixel-counter"
+            aria-label={`Clicked ${interactionCount} times`}
+            title={`You've clicked the cat ${interactionCount} times`}
+          >
+            ×{interactionCount}
+          </span>
+        )}
+        <button
+          className="pixel-hide-btn"
+          onClick={() => setHidden((h) => !h)}
+          aria-label={hidden ? "Show pixel cat companion" : "Hide pixel cat companion"}
+          title={hidden ? "Show pixel cat" : "Hide pixel cat"}
+        >
+          {hidden ? "🐱" : "×"}
+        </button>
+      </div>
 
       {!hidden && (
         <div className="pixel-animal-root" aria-hidden="true">
@@ -289,12 +374,20 @@ export function PixelAnimalController() {
             onClick={handleClick}
             onKeyDown={handleKeyDown}
           >
+            {/* Regular speech bubble */}
             {bubble && (
               <PixelSpeechBubble
                 message={bubble}
                 onDismiss={handleBubbleDismiss}
                 duration={cfg.bubbleDuration}
               />
+            )}
+
+            {/* Zzz sleeping bubble */}
+            {showZzz && !bubble && (
+              <div className="pixel-zzz" aria-hidden="true">
+                <span>z</span><span>z</span><span>Z</span>
+              </div>
             )}
 
             <div className="cat-body-wrap" style={{ display: "inline-block" }}>

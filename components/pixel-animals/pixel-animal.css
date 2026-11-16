@@ -195,12 +195,35 @@
   z-index: 1;
 }
 
-/* ── Hide toggle button ──────────────────────────── */
-.pixel-hide-btn {
+/* ── Controls group (counter + hide button) ──────── */
+.pixel-controls {
   position: fixed;
-  bottom: 48px;
+  bottom: 10px;
   right: 8px;
   z-index: 41;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+/* ── Interaction counter badge ───────────────────── */
+.pixel-counter {
+  background: var(--card);
+  border: 1.5px solid var(--border);
+  color: var(--foreground);
+  font-family: var(--font-dm-mono), monospace;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 4px;
+  opacity: 0.6;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* ── Hide toggle button ──────────────────────────── */
+.pixel-hide-btn {
   width: 22px;
   height: 22px;
   background: var(--card);
@@ -215,7 +238,6 @@
   font-family: var(--font-dm-mono), monospace;
   opacity: 0.5;
   transition: opacity 0.2s;
-  pointer-events: auto;
 }
 .pixel-hide-btn:hover,
 .pixel-hide-btn:focus-visible {
@@ -223,6 +245,32 @@
   outline: 2px solid var(--border);
   outline-offset: 2px;
 }
+
+/* ── Zzz sleeping bubble ─────────────────────────── */
+@keyframes zzz-float {
+  0%   { transform: translateY(0) scale(0.8); opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateY(-18px) scale(1.1); opacity: 0; }
+}
+
+.pixel-zzz {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  right: -4px;
+  display: flex;
+  gap: 1px;
+  pointer-events: none;
+  font-family: var(--font-dm-mono), monospace;
+  font-weight: bold;
+  color: var(--foreground);
+  opacity: 0.75;
+  animation: zzz-float 2.4s ease-in-out infinite;
+}
+
+.pixel-zzz span:nth-child(1) { font-size: 8px; opacity: 0.6; }
+.pixel-zzz span:nth-child(2) { font-size: 10px; opacity: 0.8; }
+.pixel-zzz span:nth-child(3) { font-size: 13px; opacity: 1; }
 
 /* ── Reduced-motion overrides ────────────────────── */
 @media (prefers-reduced-motion: reduce) {
@@ -239,5 +287,9 @@
   .pixel-bubble {
     animation: none !important;
     opacity: 1;
+  }
+  .pixel-zzz {
+    animation: none !important;
+    opacity: 0.6;
   }
 }
