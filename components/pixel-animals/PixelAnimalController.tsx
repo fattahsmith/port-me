@@ -1,13 +1,26 @@
 "use client";
 
 /**
- * PixelAnimalController
+ * PixelAnimalController — v3
  *
- * Drives a pixel cat that walks along the bottom of the viewport.
- * State machine: WALKING ↔ IDLE / SITTING / JUMPING / INTERACTING
+ * Full-featured interactive pixel companion.
  *
- * Movement: requestAnimationFrame + direct DOM transform = no per-frame renders.
- * React state is only updated on state transitions and responsive breakpoints.
+ * States: idle | walking | sitting | sleeping | jumping | waving | reacting
+ *
+ * Features:
+ *  - Walks horizontally along the bottom, bounces at viewport edges
+ *  - Idle breathing + blink; random idle variations
+ *  - Sits → sleeps (Zzz bubble) → wakes → walks
+ *  - Jumps + lands on click
+ *  - Waves on random events
+ *  - Looks toward cursor when nearby (desktop)
+ *  - Speech bubbles on click / random events
+ *  - Interaction counter with milestone messages
+ *  - Random event scheduler (wave, jump, message, sit)
+ *  - Pauses when browser tab is hidden (Page Visibility API)
+ *  - Minimize/restore button
+ *  - Respects prefers-reduced-motion
+ *  - Zero per-frame React re-renders (RAF + direct DOM style)
  */
 
 import React, {
@@ -22,71 +35,190 @@ import { PixelCatSprite } from "./PixelCatSprite";
 import { PixelSpeechBubble } from "./PixelSpeechBubble";
 import "./pixel-animal.css";
 
-type CatState = "walking" | "idle" | "sitting" | "jumping" | "interacting";
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+type CatState =
+  | "idle"
+  | "walking"
+  | "sitting"
+  | "sleeping"
+  | "jumping"
+  | "waving"
+  | "reacting";
+
 type Direction = 1 | -1; // 1 = right, -1 = left
 
-function getScale(width: number): number {
-  if (width < cfg.breakpoints.mobile) return cfg.scale.mobile;
-  if (width < cfg.breakpoints.tablet) return cfg.scale.tablet;
-  return cfg.scale.desktop;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
-function getSpeed(width: number): number {
-  if (width < cfg.breakpoints.mobile) return cfg.walkSpeedMobile;
-  return cfg.walkSpeed;
+function rand(min: number, max: number) {
+  return min + Math.random() * (max - min);
 }
 
 function pickRandom<T>(arr: readonly T[], exclude?: T): T {
-  const filtered = exclude !== undefined ? arr.filter((v) => v !== exclude) : arr;
-  return filtered[Math.floor(Math.random() * filtered.length)];
+  const pool = exclude !== undefined ? arr.filter((v) => v !== exclude) : [...arr];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
-const SECTION_IDS = ["home", "about", "skills", "projects", "certificates", "github", "contact"];
+function getScale(w: number): number {
+  if (w < cfg.breakpoints.mobile) return cfg.scale.mobile;
+  if (w < cfg.breakpoints.tablet) return cfg.scale.tablet;
+  return cfg.scale.desktop;
+}
+
+function getSpeed(w: number): number {
+  return w < cfg.breakpoints.mobile ? cfg.walkSpeedMobile : cfg.walkSpeed;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Messages
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CLICK_MESSAGES = [
+  "Hey there! 👋",
+  "Welcome to my portfolio!",
+  "Keep exploring!",
+  "Need some help?",
+  "Let's build something cool!",
+  "Have a nice day! ☀️",
+  "Thanks for visiting! ✨",
+  "You found me! 🎉",
+  "Meow~ 🐱",
+  "Curiosity didn't kill this cat!",
+  "404? Not here!",
+] as const;
+
+const RANDOM_MESSAGES = [
+  "Still here! 👀",
+  "Nice portfolio, right?",
+  "Check out my projects!",
+  "Scroll down for more!",
+  "Built with ❤️ and ☕",
+  "Open to collaborations!",
+] as const;
+
+const MILESTONE_MESSAGES: Record<number, string> = {
+  3: "You love clicking! 😸",
+  10: "10 times! You really like me!",
+  25: "25 clicks... 👀",
+  50: "50! You win a pixel cookie 🍪",
+};
+
+const SECTION_IDS = [
+  "home", "about", "skills", "projects",
+  "certificates", "github", "contact",
+];
+
+const SECTION_MESSAGES: Record<string, string> = {
+  home: "Welcome to my portfolio! 👋",
+  about: "A little about me!",
+  skills: "Built with code & creativity!",
+  projects: "Check out my work! ✨",
+  certificates: "Always learning!",
+  github: "Open source rocks!",
+  contact: "Let's connect! 💬",
+};
+
+/** How close (px) the cursor must be to trigger look-toward behavior */
+const LOOK_RADIUS = 200;
+/** Max walk offset from the right edge of the viewport */
+const MAX_WALK_RIGHT_OFFSET = 24;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function PixelAnimalController() {
   const reduceMotion = useReducedMotion();
+
+  // ── React state (only updated on transitions, not per-frame) ─────────────
   const [hidden, setHidden] = useState(false);
   const [catState, setCatState] = useState<CatState>("walking");
-  const [direction, setDirection] = useState<Direction>(1);
+  const [isMobile, setIsMobile] = useState(false);
   const [bubble, setBubble] = useState<string | null>(null);
-  const [mobile, setMobile] = useState(false);
+  const [showZzz, setShowZzz] = useState(false);
+  const [interactionCount, setInteractionCount] = useState(0);
 
-  // RAF-driven mutable refs (no re-renders per frame)
+  // ── RAF / DOM refs (mutated without triggering re-renders) ────────────────
   const charRef = useRef<HTMLDivElement>(null);
-  const posRef = useRef<number>(60);
+
+  /** X position from left edge (px) */
+  const posXRef = useRef<number>(120);
+  /** Current walk direction */
   const dirRef = useRef<Direction>(1);
   const stateRef = useRef<CatState>("walking");
   const speedRef = useRef<number>(cfg.walkSpeed);
   const scaleRef = useRef<number>(cfg.scale.desktop);
   const rafRef = useRef<number>(0);
-  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stateTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pageVisibleRef = useRef<boolean>(true);
+
+  /** Smooth look-toward angle (deg), interpolated each frame */
+  const lookAngleRef = useRef<number>(0);
+  const cursorXRef = useRef<number>(-9999);
+  const cursorYRef = useRef<number>(-9999);
+
+  /** Counts clicks for milestone messages */
+  const clickCountRef = useRef<number>(0);
   const lastMsgRef = useRef<string | undefined>(undefined);
   const currentSectionRef = useRef<string>("home");
 
-  // ── Responsive setup ────────────────────────────────────────────────────
+  // All timers in one registry for safe cleanup
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  function addTimer(fn: () => void, delay: number) {
+    const t = setTimeout(fn, delay);
+    timers.current.push(t);
+    return t;
+  }
+
+  function clearAllTimers() {
+    timers.current.forEach(clearTimeout);
+    timers.current = [];
+  }
+
+  // ── Responsive ────────────────────────────────────────────────────────────
   useEffect(() => {
     function update() {
       const w = window.innerWidth;
       scaleRef.current = getScale(w);
       speedRef.current = getSpeed(w);
-      setMobile(w < cfg.breakpoints.tablet);
+      setIsMobile(w < cfg.breakpoints.tablet);
     }
     update();
     window.addEventListener("resize", update, { passive: true });
     return () => window.removeEventListener("resize", update);
   }, []);
 
-  // ── Section observer ────────────────────────────────────────────────────
+  // ── Page visibility — pause when tab is hidden ────────────────────────────
+  useEffect(() => {
+    function onVisibility() {
+      pageVisibleRef.current = document.visibilityState === "visible";
+    }
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, []);
+
+  // ── Cursor tracking (desktop only) ───────────────────────────────────────
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      cursorXRef.current = e.clientX;
+      cursorYRef.current = e.clientY;
+    }
+    window.addEventListener("mousemove", onMove, { passive: true });
+    return () => window.removeEventListener("mousemove", onMove);
+  }, []);
+
+  // ── Section intersection observer ─────────────────────────────────────────
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
-        const visible = entries
+        const best = entries
           .filter((e) => e.isIntersecting)
           .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
-        if (visible?.target.id) {
-          currentSectionRef.current = visible.target.id;
-        }
+        if (best?.target.id) currentSectionRef.current = best.target.id;
       },
       { rootMargin: "-30% 0px -30% 0px", threshold: 0.3 }
     );
@@ -97,59 +229,128 @@ export function PixelAnimalController() {
     return () => observer.disconnect();
   }, []);
 
-  // ── Timer helpers (stable, no deps) ─────────────────────────────────────
-  const clearTimers = useCallback(() => {
-    if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-    if (stateTimerRef.current) clearTimeout(stateTimerRef.current);
-    idleTimerRef.current = null;
-    stateTimerRef.current = null;
-  }, []);
+  // ─────────────────────────────────────────────────────────────────────────
+  // State machine — forward declarations via refs to avoid circular deps
+  // ─────────────────────────────────────────────────────────────────────────
 
-  // ── scheduleIdle — defined before enterWalking so no forward reference ──
-  // We use a ref to hold the schedule function to break the circular dep.
+  const enterWalkingRef = useRef<() => void>(() => {});
   const scheduleIdleRef = useRef<() => void>(() => {});
+  const scheduleRandomEventRef = useRef<() => void>(() => {});
+  const showBubbleRef = useRef<(msg: string, returnDelay?: number) => void>(() => {});
 
-  const enterWalking = useCallback(() => {
-    stateRef.current = "walking";
-    setCatState("walking");
-    scheduleIdleRef.current();
-  }, []);
-
-  // Set up the scheduleIdle function and store in ref
+  // ── show bubble, then return to walking after returnDelay ─────────────────
   useEffect(() => {
-    scheduleIdleRef.current = function scheduleIdle() {
+    showBubbleRef.current = (msg: string, returnDelay = cfg.bubbleDuration + 400) => {
+      lastMsgRef.current = msg;
+      setBubble(msg);
+      addTimer(() => {
+        enterWalkingRef.current();
+      }, returnDelay);
+    };
+  });
+
+  // ── Enter walking ─────────────────────────────────────────────────────────
+  useEffect(() => {
+    enterWalkingRef.current = () => {
+      clearAllTimers();
+      stateRef.current = "walking";
+      setCatState("walking");
+      setShowZzz(false);
+      setBubble(null);
+      scheduleIdleRef.current();
+      scheduleRandomEventRef.current();
+    };
+  });
+
+  // ── Schedule next random idle event ──────────────────────────────────────
+  useEffect(() => {
+    scheduleIdleRef.current = () => {
       if (!cfg.idleBehaviorEnabled) return;
-      clearTimers();
-      const delay =
-        cfg.idleMinInterval +
-        Math.random() * (cfg.idleMaxInterval - cfg.idleMinInterval);
-      idleTimerRef.current = setTimeout(() => {
+      const delay = rand(cfg.idleMinInterval, cfg.idleMaxInterval);
+      addTimer(() => {
         if (stateRef.current !== "walking") return;
         const roll = Math.random();
-        if (roll < 0.4) {
+
+        if (roll < 0.25) {
+          // Sit → sleep → wake
           stateRef.current = "sitting";
           setCatState("sitting");
-          stateTimerRef.current = setTimeout(enterWalking, cfg.sitDuration);
-        } else if (roll < 0.7) {
+          addTimer(() => {
+            if (stateRef.current !== "sitting") return;
+            stateRef.current = "sleeping";
+            setCatState("sleeping");
+            setShowZzz(true);
+            addTimer(() => {
+              setShowZzz(false);
+              enterWalkingRef.current();
+            }, cfg.sitDuration);
+          }, 600);
+        } else if (roll < 0.5) {
+          // Plain idle
           stateRef.current = "idle";
           setCatState("idle");
-          stateTimerRef.current = setTimeout(enterWalking, cfg.idleDuration);
+          addTimer(() => enterWalkingRef.current(), cfg.idleDuration);
+        } else if (roll < 0.7) {
+          // Wave
+          stateRef.current = "waving";
+          setCatState("waving");
+          addTimer(() => enterWalkingRef.current(), 1800);
         } else {
+          // Jump
           stateRef.current = "jumping";
           setCatState("jumping");
-          stateTimerRef.current = setTimeout(enterWalking, cfg.jumpDuration);
+          addTimer(() => enterWalkingRef.current(), cfg.jumpDuration);
         }
       }, delay);
     };
-  }, [clearTimers, enterWalking]);
+  });
 
-  // Bootstrap on mount
+  // ── Schedule random unprompted events (separate cadence) ─────────────────
+  useEffect(() => {
+    scheduleRandomEventRef.current = () => {
+      const delay = rand(18000, 35000); // every 18–35s
+      addTimer(() => {
+        if (stateRef.current !== "walking") {
+          scheduleRandomEventRef.current();
+          return;
+        }
+        const roll = Math.random();
+        if (roll < 0.4) {
+          // Random message
+          stateRef.current = "reacting";
+          setCatState("reacting");
+          const msg = pickRandom(RANDOM_MESSAGES, lastMsgRef.current as (typeof RANDOM_MESSAGES)[number]);
+          showBubbleRef.current(msg);
+        } else if (roll < 0.65) {
+          // Spontaneous wave
+          stateRef.current = "waving";
+          setCatState("waving");
+          addTimer(() => {
+            enterWalkingRef.current();
+            scheduleRandomEventRef.current();
+          }, 1800);
+        } else {
+          // Spontaneous jump
+          stateRef.current = "jumping";
+          setCatState("jumping");
+          addTimer(() => {
+            enterWalkingRef.current();
+            scheduleRandomEventRef.current();
+          }, cfg.jumpDuration);
+        }
+      }, delay);
+    };
+  });
+
+  // ── Bootstrap on mount ────────────────────────────────────────────────────
   useEffect(() => {
     scheduleIdleRef.current();
-    return clearTimers;
-  }, [clearTimers]);
+    scheduleRandomEventRef.current();
+    return clearAllTimers;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── RAF walk loop ────────────────────────────────────────────────────────
+  // ── RAF walk + cursor-look loop ───────────────────────────────────────────
   useEffect(() => {
     if (reduceMotion || hidden) {
       cancelAnimationFrame(rafRef.current);
@@ -157,77 +358,94 @@ export function PixelAnimalController() {
     }
 
     let lastT = 0;
+
     function frame(t: number) {
       rafRef.current = requestAnimationFrame(frame);
+      if (!pageVisibleRef.current) { lastT = 0; return; }
       if (lastT === 0) { lastT = t; return; }
       const dt = Math.min(t - lastT, 50);
       lastT = t;
-
-      if (stateRef.current !== "walking") return;
 
       const el = charRef.current;
       if (!el) return;
 
       const charW = cfg.gridSize * scaleRef.current;
-      const maxX = window.innerWidth - charW - 8;
+      const vw = window.innerWidth;
+      const maxX = vw - charW - MAX_WALK_RIGHT_OFFSET;
 
-      let x = posRef.current + dirRef.current * speedRef.current * (dt / 16);
-
-      if (x >= maxX) {
-        x = maxX;
-        dirRef.current = -1;
-        setDirection(-1);
-      } else if (x <= 8) {
-        x = 8;
-        dirRef.current = 1;
-        setDirection(1);
+      // ── Walk movement ───────────────────────────────────────────────────
+      if (stateRef.current === "walking") {
+        let x = posXRef.current + dirRef.current * speedRef.current * (dt / 16);
+        if (x >= maxX) { x = maxX; dirRef.current = -1; }
+        else if (x <= 8) { x = 8; dirRef.current = 1; }
+        posXRef.current = x;
       }
 
-      posRef.current = x;
-      el.style.transform = `translateX(${x}px) scaleX(${dirRef.current})`;
+      // ── Cursor look (desktop) ───────────────────────────────────────────
+      let targetAngle = 0;
+      const isLookableState = stateRef.current === "walking" || stateRef.current === "idle";
+      if (!isMobile && isLookableState) {
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const dx = cursorXRef.current - cx;
+        const dy = cursorYRef.current - cy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < LOOK_RADIUS) {
+          const rawAngle = Math.atan2(dy, dx) * (180 / Math.PI);
+          targetAngle = Math.max(-18, Math.min(18, rawAngle * 0.3));
+        }
+      }
+      lookAngleRef.current += (targetAngle - lookAngleRef.current) * 0.07;
+
+      // ── Apply transform ─────────────────────────────────────────────────
+      const flipX = dirRef.current; // 1 = face right, -1 = face left
+      el.style.transform =
+        `translateX(${posXRef.current}px) scaleX(${flipX}) rotate(${lookAngleRef.current}deg)`;
     }
 
     rafRef.current = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [reduceMotion, hidden]);
+  }, [reduceMotion, hidden, isMobile]);
 
-  // Sync direction state → ref (only needed for the initial transform)
-  useEffect(() => {
-    dirRef.current = direction;
-  }, [direction]);
-
-  // ── Click / interact handler ─────────────────────────────────────────────
+  // ── Click / interact handler ───────────────────────────────────────────────
   const handleClick = useCallback(() => {
     if (!cfg.speechEnabled) return;
-    if (bubble) return;
+    clearAllTimers();
 
-    clearTimers();
-    stateRef.current = "interacting";
-    setCatState("interacting");
+    const count = clickCountRef.current + 1;
+    clickCountRef.current = count;
+    setInteractionCount(count);
 
-    const sectionMsg =
-      cfg.sectionMessages[currentSectionRef.current as keyof typeof cfg.sectionMessages];
-    const allMessages = cfg.clickMessages as readonly string[];
+    // Pick a reaction
+    const roll = Math.random();
+    let newState: CatState = "reacting";
+    if (roll < 0.3) newState = "jumping";
+    else if (roll < 0.55) newState = "waving";
 
+    stateRef.current = newState;
+    setCatState(newState);
+    setShowZzz(false);
+
+    // Pick message: milestone > section-aware > click pool
     let msg: string;
-    if (sectionMsg && lastMsgRef.current !== sectionMsg) {
-      msg = sectionMsg;
+    if (MILESTONE_MESSAGES[count]) {
+      msg = MILESTONE_MESSAGES[count];
     } else {
-      msg = pickRandom(allMessages, lastMsgRef.current as (typeof allMessages)[number]);
+      const sectionMsg = SECTION_MESSAGES[currentSectionRef.current];
+      const pool = CLICK_MESSAGES as readonly string[];
+      if (sectionMsg && lastMsgRef.current !== sectionMsg) {
+        msg = sectionMsg;
+      } else {
+        msg = pickRandom(pool, lastMsgRef.current);
+      }
     }
-    lastMsgRef.current = msg;
-    setBubble(msg);
 
-    stateTimerRef.current = setTimeout(() => {
-      stateRef.current = "walking";
-      setCatState("walking");
-      scheduleIdleRef.current();
-    }, cfg.bubbleDuration + 300);
-  }, [bubble, clearTimers]);
-
-  const handleBubbleDismiss = useCallback(() => {
-    setBubble(null);
+    showBubbleRef.current(msg, cfg.bubbleDuration + 500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleBubbleDismiss = useCallback(() => setBubble(null), []);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -239,44 +457,56 @@ export function PixelAnimalController() {
     [handleClick]
   );
 
-  // ── Cleanup ──────────────────────────────────────────────────────────────
+  // ── Cleanup ────────────────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
-      clearTimers();
+      clearAllTimers();
       cancelAnimationFrame(rafRef.current);
     };
-  }, [clearTimers]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ── Reduced motion: static render ────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────
+  // Render
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (!cfg.enabled) return null;
+
+  // Reduced-motion: static character, no movement
   if (reduceMotion) {
-    if (hidden) return null;
-    return (
+    return hidden ? null : (
       <div className="pixel-animal-root" aria-hidden="true">
         <div
-          style={{ position: "absolute", bottom: 8, left: 60 }}
+          className="pixel-char"
+          style={{ position: "absolute", bottom: 8, right: 24 }}
           role="img"
           aria-label="Pixel cat companion"
         >
-          <PixelCatSprite mobile={mobile} />
+          <PixelCatSprite mobile={isMobile} state="idle" />
         </div>
       </div>
     );
   }
 
-  if (!cfg.enabled) return null;
-
   const stateClass = `cat-${catState}`;
 
   return (
     <>
-      <button
-        className="pixel-hide-btn"
-        onClick={() => setHidden((h) => !h)}
-        aria-label={hidden ? "Show pixel cat companion" : "Hide pixel cat companion"}
-        title={hidden ? "Show pixel cat" : "Hide pixel cat"}
-      >
-        {hidden ? "🐱" : "×"}
-      </button>
+      {/* Controls */}
+      <div className="pixel-controls">
+        {!hidden && interactionCount > 0 && (
+          <span className="pixel-counter" aria-label={`Clicked ${interactionCount} times`}>
+            ×{interactionCount}
+          </span>
+        )}
+        <button
+          className="pixel-hide-btn"
+          onClick={() => setHidden((h) => !h)}
+          aria-label={hidden ? "Show pixel companion" : "Hide pixel companion"}
+        >
+          {hidden ? "🐱" : "×"}
+        </button>
+      </div>
 
       {!hidden && (
         <div className="pixel-animal-root" aria-hidden="true">
@@ -285,10 +515,11 @@ export function PixelAnimalController() {
             className={`pixel-char ${stateClass}`}
             role="button"
             tabIndex={0}
-            aria-label="Pixel cat companion – click to interact"
+            aria-label="Pixel cat – click to interact"
             onClick={handleClick}
             onKeyDown={handleKeyDown}
           >
+            {/* Speech bubble */}
             {bubble && (
               <PixelSpeechBubble
                 message={bubble}
@@ -297,8 +528,15 @@ export function PixelAnimalController() {
               />
             )}
 
-            <div className="cat-body-wrap" style={{ display: "inline-block" }}>
-              <PixelCatSprite mobile={mobile} />
+            {/* Zzz sleeping bubble */}
+            {showZzz && !bubble && (
+              <div className="pixel-zzz" aria-hidden="true">
+                <span>z</span><span>z</span><span>Z</span>
+              </div>
+            )}
+
+            <div className="cat-body-wrap">
+              <PixelCatSprite mobile={isMobile} state={catState} />
             </div>
           </div>
         </div>
