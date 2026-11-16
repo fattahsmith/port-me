@@ -1,9 +1,9 @@
+import Image from "next/image";
 import Link from "next/link";
 import { Code2, Camera, Network, MessageCircle, ExternalLink } from "lucide-react";
 import { profile, socialHref } from "@/data/profile";
 import { SectionHeading } from "@/components/ui/SectionHeading";
 import { Reveal } from "@/components/ui/Reveal";
-import { SpiderManProfile } from "@/components/sections/SpiderManProfile";
 
 const socials = [
   { label: "Instagram", icon: Camera, href: socialHref(profile.social.instagram) },
@@ -26,7 +26,16 @@ export function About() {
             <div className="group relative mx-auto max-w-md lg:mx-0">
               <div className="absolute -right-3 -top-3 h-full w-full bg-purple brutal-border" />
               <div className="relative brutal-border brutal-shadow overflow-hidden bg-lime/30 transition-transform duration-500 group-hover:-translate-x-1 group-hover:-translate-y-1">
-                <SpiderManProfile sizes="(max-width: 1024px) 80vw, 480px" />
+                <div className="relative aspect-square">
+                  <Image
+                    src="/images/foto1.jpeg"
+                    alt="Profile photo"
+                    fill
+                    priority
+                    className="object-cover transition-transform duration-500 group-hover:scale-105"
+                    sizes="(max-width: 1024px) 80vw, 480px"
+                  />
+                </div>
               </div>
             </div>
           </Reveal>
